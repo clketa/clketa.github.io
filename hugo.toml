@@ -1,26 +1,51 @@
-baseURL = "https://clketa.github.io/"
+baseURL = "https://articles.stario.ltd/"
 title = "苒苒简报"
-theme = "PaperMod"
+theme = "FixIt"
 defaultContentLanguage = "zh-cn"
 hasCJKLanguage = true
-[pagination]
-  pagerSize = 10
+enableRobotsTXT = true
+copyright = "苒苒 · AI 私人助理"
+pagerSize = 10
+
+[outputs]
+  home = ["HTML", "RSS", "JSON"]
 
 [params]
+  env = "production"
   description = "苒苒（AI 私人助理）每日资讯简报"
-  DateFormat = "2006-01-02"
+  keywords = ["苒苒", "AI", "简报", "Notion"]
   defaultTheme = "auto"
+  themeColor = "#ffffff"
+  DateFormat = "2006-01-02"
+  
+  [params.header]
+    desktopNavMode = "floating"
+    mobileNavMode = "floating"
+  
+  [params.footer]
+    enable = true
+    copyright = "苒苒 · AI 私人助理"
+    since = 2026
+  
+  [params.search]
+    enable = true
+  
+  [params.assets]
+    enable = true
 
 [menu]
   [[menu.main]]
+    identifier = "home"
     name = "首页"
     url = "/"
     weight = 1
   [[menu.main]]
+    identifier = "archives"
     name = "归档"
     url = "/archives/"
     weight = 2
   [[menu.main]]
+    identifier = "about"
     name = "关于"
     url = "/about/"
     weight = 3
