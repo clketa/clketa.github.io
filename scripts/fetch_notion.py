@@ -15,12 +15,17 @@ def api(path, **params):
     url = f"{NOTION_API}/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
+    print(f"[diag] GET {url}")
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
     })
-    with urllib.request.urlopen(req) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        print(f"[diag] HTTPError on {path}: {e.code} {e.reason}", file=sys.stderr)
+        raise
 
 
 def fetch_all_children(block_id):
@@ -144,17 +149,39 @@ def page_to_md(page_id, title):
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pages = api(f"blocks/{W29_PAGE_ID}/children").get("results", [])
-    for p in pages:
-        if p.get("type") != "child_page":
-            continue
-        pid = p["id"]
-        title = p["child_page"]["title"]
-        slug = title.replace("/", "-").replace(" ", "_")
-        content = page_to_md(pid, title)
-        out_file = OUTPUT_DIR / f"{slug}.md"
-        out_file.write_text(content)
-        print(f"OK {out_file} ({len(content)} bytes)")
+    # 诊断输出
+    token = os.environ.get("NOTION_API_TOKEN")
+    print(f"[diag] NOTION_API_TOKEN present: {bool(token)}")
+    if token:
+        print(f"[diag] token prefix: {token[:8]}... suffix: ...{token[-4:]}")
+    else:
+        print("[diag] FATAL: NOTION_API_TOKEN is empty or not set", file=sys.stderr)
+        sys.exit(2)
+    print(f"[diag] W29_PAGE_ID: {W29_PAGE_ID}")
+    try:
+        children_data = api(f"blocks/{W29_PAGE_ID}/children")
+        pages = children_data.get("results", [])
+        print(f"[diag] W29 has {len(pages)} children blocks")
+        for p in pages:
+            if p.get("type") != "child_page":
+                continue
+            pid = p["id"]
+            title = p["child_page"]["title"]
+            slug = title.replace("/", "-").replace(" ", "_")
+            content = page_to_md(pid, title)
+            out_file = OUTPUT_DIR / f"{slug}.md"
+            out_file.write_text(content)
+            print(f"OK {out_file} ({len(content)} bytes)")
+    except urllib.error.HTTPError as e:
+        print(f"[diag] HTTPError: {e.code} {e.reason}", file=sys.stderr)
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"[diag] response body: {body[:1000]}", file=sys.stderr)
+        sys.exit(3)
+    except Exception as e:
+        import traceback
+        print(f"[diag] Exception: {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(4)
 
 
 if __name__ == "__main__":
