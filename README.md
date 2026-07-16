@@ -2,7 +2,7 @@
 
 每日资讯简报，自动从 Notion 同步，Hugo 渲染，GitHub Pages 部署。
 
-线上地址：<https://clketa.github.io/briefing-site/>
+线上地址：<https://clketa.github.io/>
 
 ## 本地预览
 
@@ -10,7 +10,7 @@
 hugo server -D
 ```
 
-打开 <http://localhost:1313/briefing-site/>
+打开 <http://localhost:1313/>
 
 ## 同步 Notion 内容
 

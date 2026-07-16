@@ -1,4 +1,4 @@
-baseURL = "https://clketa.github.io/briefing-site/"
+baseURL = "https://clketa.github.io/"
 title = "苒苒简报"
 theme = "PaperMod"
 defaultContentLanguage = "zh-cn"
