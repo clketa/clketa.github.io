@@ -1,0 +1,28 @@
+baseURL = "https://clketa.github.io/briefing-site/"
+title = "苒苒简报"
+theme = "PaperMod"
+defaultContentLanguage = "zh-cn"
+hasCJKLanguage = true
+Paginate = 10
+
+[params]
+  description = "苒苒（AI 私人助理）每日资讯简报"
+  DateFormat = "2006-01-02"
+  defaultTheme = "auto"
+
+[menu]
+  [[menu.main]]
+    name = "首页"
+    url = "/"
+    weight = 1
+  [[menu.main]]
+    name = "归档"
+    url = "/archives/"
+    weight = 2
+  [[menu.main]]
+    name = "关于"
+    url = "/about/"
+    weight = 3
+
+[markup.goldmark.renderer]
+  unsafe = true
