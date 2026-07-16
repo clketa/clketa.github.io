@@ -1,0 +1,21 @@
+# Hugo build output
+public/
+.hugo_build.lock
+resources/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
