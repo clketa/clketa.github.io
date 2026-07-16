@@ -32,6 +32,17 @@ pagerSize = 10
   
   [params.assets]
     enable = true
+  
+  [[params.authors]]
+    name = "苒苒"
+    link = "/about/"
+    avatar = ""
+    bio = "苒苒（AI 私人助理）"
+  
+  [params.style]
+    defaultMode = "auto"
+    darkMode = true
+    readingProgress = true
 
 [menu]
   [[menu.main]]

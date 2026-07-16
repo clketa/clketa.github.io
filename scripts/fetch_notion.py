@@ -7,7 +7,7 @@ from datetime import datetime
 NOTION_API = "https://api.notion.com/v1"
 NOTION_TOKEN = os.environ.get("NOTION_API_TOKEN")
 NOTION_VERSION = "2026-03-11"
-W29_PAGE_ID = "39cb7087-4975-81bd-9d12-ff708c7c62f7"
+YEAR_2026_PAGE_ID = "395b7087-4975-814a-87c4-ed304502a93e"
 OUTPUT_DIR = Path("content/post")
 
 
@@ -143,7 +143,8 @@ def blocks_to_md(blocks, indent=0):
 def page_to_md(page_id, title):
     blocks = fetch_all_children(page_id)
     body = blocks_to_md(blocks)
-    front_matter = f"---\ntitle: \"{title}\"\ndate: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')}\ndraft: false\n---\n\n"
+    safe_title = json.dumps(title, ensure_ascii=False)
+    front_matter = f"---\ntitle: {safe_title}\ndate: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')}\ndraft: false\n---\n\n"
     return front_matter + body
 
 
@@ -157,21 +158,31 @@ def main():
     else:
         print("[diag] FATAL: NOTION_API_TOKEN is empty or not set", file=sys.stderr)
         sys.exit(2)
-    print(f"[diag] W29_PAGE_ID: {W29_PAGE_ID}")
+    print(f"[diag] YEAR_2026_PAGE_ID: {YEAR_2026_PAGE_ID}")
     try:
-        children_data = api(f"blocks/{W29_PAGE_ID}/children")
-        pages = children_data.get("results", [])
-        print(f"[diag] W29 has {len(pages)} children blocks")
-        for p in pages:
-            if p.get("type") != "child_page":
-                continue
-            pid = p["id"]
-            title = p["child_page"]["title"]
-            slug = title.replace("/", "-").replace(" ", "_")
-            content = page_to_md(pid, title)
-            out_file = OUTPUT_DIR / f"{slug}.md"
-            out_file.write_text(content)
-            print(f"OK {out_file} ({len(content)} bytes)")
+        # 动态发现：找 📅 2026 下面所有 🗓 Wnn 子页
+        weeks_data = api(f"blocks/{YEAR_2026_PAGE_ID}/children")
+        weeks = [b for b in weeks_data.get("results", []) if b.get("type") == "child_page"]
+        print(f"[diag] Found {len(weeks)} week pages under 📅 2026")
+        total = 0
+        for week in weeks:
+            wpid = week["id"]
+            wtitle = week["child_page"]["title"]
+            print(f"[diag] -- Processing {wtitle} ({wpid})")
+            briefings = api(f"blocks/{wpid}/children").get("results", [])
+            print(f"[diag]    {wtitle} has {len(briefings)} children blocks")
+            for b in briefings:
+                if b.get("type") != "child_page":
+                    continue
+                pid = b["id"]
+                title = b["child_page"]["title"]
+                slug = title.replace("/", "-").replace(" ", "_")
+                content = page_to_md(pid, title)
+                out_file = OUTPUT_DIR / f"{slug}.md"
+                out_file.write_text(content)
+                print(f"OK {out_file} ({len(content)} bytes)")
+                total += 1
+        print(f"[diag] Done. {total} briefings fetched.")
     except urllib.error.HTTPError as e:
         print(f"[diag] HTTPError: {e.code} {e.reason}", file=sys.stderr)
         body = e.read().decode("utf-8", errors="replace")
