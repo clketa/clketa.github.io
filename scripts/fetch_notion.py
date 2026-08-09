@@ -15,7 +15,7 @@ def api(path, **params):
     url = f"{NOTION_API}/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    print(f"[diag] GET {url}")
+    print(f"[diag] GET {url}", file=sys.stderr)
     req = urllib.request.Request(url, headers={
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
@@ -152,25 +152,25 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     # 诊断输出
     token = os.environ.get("NOTION_API_TOKEN")
-    print(f"[diag] NOTION_API_TOKEN present: {bool(token)}")
+    print(f"[diag] NOTION_API_TOKEN present: {bool(token)}", file=sys.stderr)
     if token:
-        print(f"[diag] token prefix: {token[:8]}... suffix: ...{token[-4:]}")
+        print(f"[diag] token prefix: {token[:8]}... suffix: ...{token[-4:]}", file=sys.stderr)
     else:
         print("[diag] FATAL: NOTION_API_TOKEN is empty or not set", file=sys.stderr)
         sys.exit(2)
-    print(f"[diag] YEAR_2026_PAGE_ID: {YEAR_2026_PAGE_ID}")
+    print(f"[diag] YEAR_2026_PAGE_ID: {YEAR_2026_PAGE_ID}", file=sys.stderr)
     try:
         # 动态发现：找 📅 2026 下面所有 🗓 Wnn 子页
         weeks_data = api(f"blocks/{YEAR_2026_PAGE_ID}/children")
         weeks = [b for b in weeks_data.get("results", []) if b.get("type") == "child_page"]
-        print(f"[diag] Found {len(weeks)} week pages under 📅 2026")
+        print(f"[diag] Found {len(weeks)} week pages under 📅 2026", file=sys.stderr)
         total = 0
         for week in weeks:
             wpid = week["id"]
             wtitle = week["child_page"]["title"]
-            print(f"[diag] -- Processing {wtitle} ({wpid})")
+            print(f"[diag] -- Processing {wtitle} ({wpid})", file=sys.stderr)
             briefings = api(f"blocks/{wpid}/children").get("results", [])
-            print(f"[diag]    {wtitle} has {len(briefings)} children blocks")
+            print(f"[diag]    {wtitle} has {len(briefings)} children blocks", file=sys.stderr)
             for b in briefings:
                 if b.get("type") != "child_page":
                     continue
@@ -180,9 +180,10 @@ def main():
                 content = page_to_md(pid, title)
                 out_file = OUTPUT_DIR / f"{slug}.md"
                 out_file.write_text(content)
-                print(f"OK {out_file} ({len(content)} bytes)")
+                print(f"OK {out_file} ({len(content)} bytes)", file=sys.stderr)
                 total += 1
-        print(f"[diag] Done. {total} briefings fetched.")
+        # stdout: clean summary only — cron delivery pushes this to channel
+        print(f"✅ daily-briefing fetched: {total} briefings from {len(weeks)} weeks")
     except urllib.error.HTTPError as e:
         print(f"[diag] HTTPError: {e.code} {e.reason}", file=sys.stderr)
         body = e.read().decode("utf-8", errors="replace")
