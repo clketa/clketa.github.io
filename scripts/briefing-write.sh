@@ -353,16 +353,26 @@ if [ "$DRY_RUN" = "1" ]; then
 elif [ "${NOTION_HAS_TODAY:-0}" = "1" ] || [ "$SKIP_COVER" = "1" ]; then
   log_info "跳过 file_upload"
 else
-  # Step 7a: 创建 record（stderr 捕获到 .err 文件，失败时 cat 到 stderr）
+  # Step 7a: 创建 record（stderr 捕获到 .err 文件 + DEBUG_LOG 全量持久化供后续排查）
   log_info "  POST /v1/file_uploads (single_part)"
   FU_ERR_LOG="${BRIEFING_TMP_DIR}/briefing-${TODAY_COMPACT}-fu-err.log"
+  FU_DEBUG_LOG="${BRIEFING_TMP_DIR}/briefing-${TODAY_COMPACT}-fu-debug.log"
   FU_RECORD="$(notion_create_file_upload_record "briefing-${TODAY_COMPACT}-cover.png" "image/png" 2>"$FU_ERR_LOG")"
   FILE_UPLOAD_ID="$(echo "$FU_RECORD" | jget id)"
   UPLOAD_URL="$(echo "$FU_RECORD" | jget upload_url)"
+  # DEBUG: 全量写到 FU_DEBUG_LOG（OpenClaw stdout 被截 1997 chars，看不到后续）
+  {
+    echo "=== FU DEBUG $(date '+%Y-%m-%d %H:%M:%S') ==="
+    echo "FU_RECORD length: ${#FU_RECORD}"
+    echo "FU_RECORD: $FU_RECORD"
+    echo "FILE_UPLOAD_ID: $FILE_UPLOAD_ID"
+    echo "UPLOAD_URL: $UPLOAD_URL"
+    echo "--- FU_ERR_LOG content ---"
+    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file missing/empty)"
+  } > "$FU_DEBUG_LOG"
   if [ -z "$FILE_UPLOAD_ID" ] || [ -z "$UPLOAD_URL" ]; then
-    log_error "file_upload record 创建失败 — FU_RECORD 输出到 stdout 供 OpenClaw 捕获"
-    echo "FU_RECORD=$FU_RECORD"
-    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file empty)"
+    log_error "file_upload record 创建失败 — 看 $FU_DEBUG_LOG"
+    cat "$FU_DEBUG_LOG"
     exit 7
   fi
   log_info "  file_upload id=$FILE_UPLOAD_ID"
@@ -370,10 +380,17 @@ else
   log_info "  POST $UPLOAD_URL (multipart)"
   FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH" 2>>"$FU_ERR_LOG")"
   FU_STATUS="$(echo "$FU_RESULT" | jget status)"
+  {
+    echo "--- Step 7b result ---"
+    echo "FU_RESULT length: ${#FU_RESULT}"
+    echo "FU_RESULT: $FU_RESULT"
+    echo "FU_STATUS: $FU_STATUS"
+    echo "--- FU_ERR_LOG content ---"
+    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file missing/empty)"
+  } >> "$FU_DEBUG_LOG"
   if [ "$FU_STATUS" != "uploaded" ]; then
-    log_error "file_upload send 失败 status=$FU_STATUS — FU_RESULT 输出到 stdout 供 OpenClaw 捕获"
-    echo "FU_RESULT=$FU_RESULT"
-    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file empty)"
+    log_error "file_upload send 失败 status=$FU_STATUS — 看 $FU_DEBUG_LOG"
+    cat "$FU_DEBUG_LOG"
     exit 7
   fi
   log_info "  file_upload status=uploaded ✓"
