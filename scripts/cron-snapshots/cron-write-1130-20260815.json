@@ -1,0 +1,70 @@
+{
+  "id": "00697af5-e096-40ea-a9d3-c9729d6d260f",
+  "name": "daily-briefing-write-1130",
+  "description": "Daily briefing write-up at 11:30 Asia/Shanghai: bash /home/ubuntu/projects/briefing-site/scripts/briefing-write.sh 直跑脚本（2026-08-15 重构，移除 LLM 行为不可控）。12 步：env → date → Notion path → dedup → 4 路 web_search → LLM → cover → upload → page → summary → cover/icon → voice。下游 12:00 cron daily-briefing-noon 自动部署。失败告警即推送，退出码 0-12 分步独立。",
+  "enabled": true,
+  "createdAtMs": 1785751693922,
+  "updatedAtMs": 1786774170050,
+  "schedule": {
+    "kind": "cron",
+    "expr": "30 11 * * *",
+    "tz": "Asia/Shanghai",
+    "staggerMs": 60000
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "command",
+    "argv": [
+      "sh",
+      "-lc",
+      "bash /home/ubuntu/projects/briefing-site/scripts/briefing-write.sh"
+    ],
+    "timeoutSeconds": 900
+  },
+  "delivery": {
+    "mode": "none",
+    "channel": "qqbot",
+    "to": "qqbot:c2c:AC2877150610DAE34B05C4B44FC8DBFE",
+    "accountId": "4013383086",
+    "bestEffort": true
+  },
+  "failureAlert": {
+    "after": 1,
+    "channel": "qqbot",
+    "to": "qqbot:c2c:AC2877150610DAE34B05C4B44FC8DBFE",
+    "mode": "announce",
+    "accountId": "4013383086"
+  },
+  "state": {
+    "nextRunAtMs": 1786851027427,
+    "lastRunAtMs": 1786764627432,
+    "lastRunStatus": "error",
+    "lastStatus": "error",
+    "lastDurationMs": 211968,
+    "lastDeliveryStatus": "not-requested",
+    "lastFailureNotificationDeliveryStatus": "not-requested",
+    "consecutiveErrors": 5,
+    "consecutiveSkipped": 0,
+    "lastError": "FallbackSummaryError: All models failed (2): minimax/MiniMax-M3: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded) | minimax/MiniMax-1: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded)",
+    "lastDiagnostics": {
+      "summary": "All models failed (2): minimax/MiniMax-M3: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded) | minimax/MiniMax-1: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded)",
+      "entries": [
+        {
+          "ts": 1786764839396,
+          "source": "agent-run",
+          "severity": "error",
+          "message": "All models failed (2): minimax/MiniMax-M3: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded) | minimax/MiniMax-1: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded)"
+        }
+      ]
+    },
+    "lastDiagnosticSummary": "All models failed (2): minimax/MiniMax-M3: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded) | minimax/MiniMax-1: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded)",
+    "lastErrorReason": "overloaded"
+  },
+  "nextRunAtMs": 1786851027427,
+  "lastRunAtMs": 1786764627432,
+  "lastRunStatus": "error",
+  "lastRunError": "FallbackSummaryError: All models failed (2): minimax/MiniMax-M3: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded) | minimax/MiniMax-1: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"server is busy, please retry later\"}} (overloaded)",
+  "lastDeliveryStatus": "not-requested",
+  "lastFailureNotificationDeliveryStatus": "not-requested"
+}

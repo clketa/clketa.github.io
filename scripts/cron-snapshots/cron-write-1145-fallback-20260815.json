@@ -1,0 +1,73 @@
+{
+  "id": "96be92cc-d750-4baf-8d82-da83a8702004",
+  "name": "daily-briefing-write-1145-fallback",
+  "description": "Daily briefing 兜底 cron at 11:45 Asia/Shanghai: 如果 11:30 write-1130 失败，独立 session 重跑 bash /home/ubuntu/projects/briefing-site/scripts/briefing-write.sh。脚本内部会自动跳过今日已有简报，只发语音确认。下游 12:00 cron daily-briefing-noon 自动部署。失败告警即推送。",
+  "enabled": true,
+  "createdAtMs": 1785994978700,
+  "updatedAtMs": 1786774170091,
+  "schedule": {
+    "kind": "cron",
+    "expr": "45 11 * * *",
+    "tz": "Asia/Shanghai"
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "command",
+    "argv": [
+      "sh",
+      "-lc",
+      "bash /home/ubuntu/projects/briefing-site/scripts/briefing-write.sh"
+    ],
+    "timeoutSeconds": 900
+  },
+  "delivery": {
+    "mode": "none",
+    "channel": "qqbot",
+    "to": "qqbot:c2c:AC2877150610DAE34B05C4B44FC8DBFE",
+    "accountId": "4013383086"
+  },
+  "failureAlert": {
+    "after": 1,
+    "channel": "qqbot",
+    "to": "qqbot:c2c:AC2877150610DAE34B05C4B44FC8DBFE",
+    "accountId": "4013383086"
+  },
+  "state": {
+    "nextRunAtMs": 1786851900000,
+    "lastRunAtMs": 1786765500004,
+    "lastRunStatus": "error",
+    "lastStatus": "error",
+    "lastDurationMs": 182817,
+    "lastDeliveryStatus": "not-requested",
+    "lastFailureNotificationDeliveryStatus": "not-requested",
+    "consecutiveErrors": 5,
+    "consecutiveSkipped": 0,
+    "lastError": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN",
+    "lastDiagnostics": {
+      "summary": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN",
+      "entries": [
+        {
+          "ts": 1786765682816,
+          "source": "tool",
+          "severity": "error",
+          "message": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN"
+        },
+        {
+          "ts": 1786765682816,
+          "source": "agent-run",
+          "severity": "error",
+          "message": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN"
+        }
+      ]
+    },
+    "lastDiagnosticSummary": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN",
+    "lastFailureAlertAtMs": 1786765682826
+  },
+  "nextRunAtMs": 1786851900000,
+  "lastRunAtMs": 1786765500004,
+  "lastRunStatus": "error",
+  "lastRunError": "⚠️ 🛠️ Exec failed: print text → run printenv NOTION_API_TOKEN",
+  "lastDeliveryStatus": "not-requested",
+  "lastFailureNotificationDeliveryStatus": "not-requested"
+}
