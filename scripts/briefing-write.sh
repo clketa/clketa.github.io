@@ -333,9 +333,8 @@ else
     --out "$COVER_PATH" 2>"${COVER_PATH}.err"
   RC=$?
   if [ $RC -ne 0 ] || [ ! -s "$COVER_PATH" ]; then
-    log_error "封面图生成失败 exit=$RC"
-    cat "${COVER_PATH}.err" >&2 2>/dev/null || true
-    rm -f "${COVER_PATH}.err"
+    log_error "封面图生成失败 exit=$RC — stderr 保留到 ${COVER_PATH}.err，内容打到 stdout 给 OpenClaw 捕获"
+    cat "${COVER_PATH}.err" 2>/dev/null || echo "(.err file empty/missing)"
     exit 6
   fi
   rm -f "${COVER_PATH}.err"
