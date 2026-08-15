@@ -214,7 +214,15 @@ run_search() {
   log_info "  search[$label] done → $outfile"
 }
 
-# 4 路并行
+# 4 路并行（SEARCH_FILES 必须在父 shell 预定义 —— 子 shell 中的数组变更不会传回）
+# 2026-08-15 修复：原版在 run_search 函数内做 SEARCH_FILES+=，但 4 路用 & 后台启动，
+# 实际在子 shell 跑，修改不会传回父 shell，导致 SEARCH_OK 永远 = 0，触发 exit 4
+SEARCH_FILES=(
+  "${SEARCH_DIR}/domestic.jsonl"
+  "${SEARCH_DIR}/international.jsonl"
+  "${SEARCH_DIR}/tech_finance.jsonl"
+  "${SEARCH_DIR}/markets.jsonl"
+)
 run_search "domestic"     "$TODAY 中国 国内 重要新闻 头条" &
 PID1=$!
 run_search "international" "$TODAY world top stories breaking news" &
