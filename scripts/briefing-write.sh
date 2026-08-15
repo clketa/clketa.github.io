@@ -395,6 +395,7 @@ else
   fi
   log_info "  file_upload status=uploaded ✓"
   rm -f "$FU_ERR_LOG"
+  rm -f "$FU_DEBUG_LOG"  # 成功时也清掉 debug log，避免 leak
 fi
 
 # ----------------------------------------------------------------------------

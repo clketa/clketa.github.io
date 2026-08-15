@@ -235,6 +235,9 @@ def parse_structured_fields(raw_text: str) -> dict:
         m = TITLE_RE.search(raw_text)
         if m:
             result["title"] = m.group(1).strip()
+            print(f"[parse] WARN: LLM 没输出末尾 json block，从 H1 提取 title={result['title']!r}", file=sys.stderr)
+        else:
+            print("[parse] WARN: LLM 既没 json block 也没 H1，title 为空（Step 5 校验会失败）", file=sys.stderr)
         return result
     # 取最后一个 json block（结构化数据块在末尾）
     try:
@@ -243,7 +246,7 @@ def parse_structured_fields(raw_text: str) -> dict:
             if k in data:
                 result[k] = data[k]
     except (json.JSONDecodeError, KeyError, IndexError) as e:
-        # fallback: 解析失败仍用 H1
+        print(f"[parse] WARN: JSON decode 失败 {type(e).__name__}: {e}; fallback 到 H1", file=sys.stderr)
         m = TITLE_RE.search(raw_text)
         if m:
             result["title"] = m.group(1).strip()
@@ -251,6 +254,8 @@ def parse_structured_fields(raw_text: str) -> dict:
         m = TITLE_RE.search(raw_text)
         if m:
             result["title"] = m.group(1).strip()
+        else:
+            print("[parse] WARN: title 仍为空（Step 5 校验会失败）", file=sys.stderr)
     return result
 
 
