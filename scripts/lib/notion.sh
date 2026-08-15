@@ -233,15 +233,19 @@ notion_create_file_upload_record() {
 
 # ----------------------------------------------------------------------------
 # file_upload: 发送文件内容到 upload_url（multipart）
-# 用法：notion_send_file_upload <upload_url> <file_path>
+# 用法：notion_send_file_upload <upload_url> <file_path> [mime_type]
+# 注意：mime_type 必须与 Step 7a 注册时一致，否则 Notion 报 400 validation_error
+# 2026-08-15 修复：原本用 file -b --mime-type 自动检测，但 cover.png 被检测成 image/jpeg，
+# 跟 Step 7a 注册的 image/png 不匹配，导致所有 cron run 报 exit 7
 # ----------------------------------------------------------------------------
 notion_send_file_upload() {
   local upload_url="$1"
   local file_path="$2"
+  local mime_type="${3:-image/png}"
   curl -sS -X POST "${upload_url}" \
     -H "Authorization: Bearer ${NOTION_API_TOKEN}" \
     -H "Notion-Version: ${NOTION_API_VERSION}" \
-    -F "file=@${file_path};type=$(file -b --mime-type "${file_path}" 2>/dev/null || echo image/png);filename=$(basename "${file_path}")"
+    -F "file=@${file_path};type=${mime_type};filename=$(basename "${file_path}")"
 }
 
 # ----------------------------------------------------------------------------

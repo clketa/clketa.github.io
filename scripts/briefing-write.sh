@@ -378,7 +378,7 @@ else
   log_info "  file_upload id=$FILE_UPLOAD_ID"
   # Step 7b: 发送文件（同样 stderr 捕获）
   log_info "  POST $UPLOAD_URL (multipart)"
-  FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH" 2>>"$FU_ERR_LOG")"
+  FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH" "image/png" 2>>"$FU_ERR_LOG")"
   FU_STATUS="$(echo "$FU_RESULT" | jget status)"
   {
     echo "--- Step 7b result ---"
