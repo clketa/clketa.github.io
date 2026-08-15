@@ -360,9 +360,9 @@ else
   FILE_UPLOAD_ID="$(echo "$FU_RECORD" | jget id)"
   UPLOAD_URL="$(echo "$FU_RECORD" | jget upload_url)"
   if [ -z "$FILE_UPLOAD_ID" ] || [ -z "$UPLOAD_URL" ]; then
-    log_error "file_upload record 创建失败"
-    echo "$FU_RECORD" >&2
-    cat "$FU_ERR_LOG" >&2 2>/dev/null || true
+    log_error "file_upload record 创建失败 — FU_RECORD 输出到 stdout 供 OpenClaw 捕获"
+    echo "FU_RECORD=$FU_RECORD"
+    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file empty)"
     exit 7
   fi
   log_info "  file_upload id=$FILE_UPLOAD_ID"
@@ -371,9 +371,9 @@ else
   FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH" 2>>"$FU_ERR_LOG")"
   FU_STATUS="$(echo "$FU_RESULT" | jget status)"
   if [ "$FU_STATUS" != "uploaded" ]; then
-    log_error "file_upload send 失败 status=$FU_STATUS"
-    echo "$FU_RESULT" >&2
-    cat "$FU_ERR_LOG" >&2 2>/dev/null || true
+    log_error "file_upload send 失败 status=$FU_STATUS — FU_RESULT 输出到 stdout 供 OpenClaw 捕获"
+    echo "FU_RESULT=$FU_RESULT"
+    cat "$FU_ERR_LOG" 2>/dev/null || echo "(.err file empty)"
     exit 7
   fi
   log_info "  file_upload status=uploaded ✓"
