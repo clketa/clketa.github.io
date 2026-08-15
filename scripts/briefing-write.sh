@@ -354,27 +354,31 @@ if [ "$DRY_RUN" = "1" ]; then
 elif [ "${NOTION_HAS_TODAY:-0}" = "1" ] || [ "$SKIP_COVER" = "1" ]; then
   log_info "跳过 file_upload"
 else
-  # Step 7a: 创建 record
+  # Step 7a: 创建 record（stderr 捕获到 .err 文件，失败时 cat 到 stderr）
   log_info "  POST /v1/file_uploads (single_part)"
-  FU_RECORD="$(notion_create_file_upload_record "briefing-${TODAY_COMPACT}-cover.png" "image/png")"
+  FU_ERR_LOG="${BRIEFING_TMP_DIR}/briefing-${TODAY_COMPACT}-fu-err.log"
+  FU_RECORD="$(notion_create_file_upload_record "briefing-${TODAY_COMPACT}-cover.png" "image/png" 2>"$FU_ERR_LOG")"
   FILE_UPLOAD_ID="$(echo "$FU_RECORD" | jget id)"
   UPLOAD_URL="$(echo "$FU_RECORD" | jget upload_url)"
   if [ -z "$FILE_UPLOAD_ID" ] || [ -z "$UPLOAD_URL" ]; then
     log_error "file_upload record 创建失败"
     echo "$FU_RECORD" >&2
+    cat "$FU_ERR_LOG" >&2 2>/dev/null || true
     exit 7
   fi
   log_info "  file_upload id=$FILE_UPLOAD_ID"
-  # Step 7b: 发送文件
+  # Step 7b: 发送文件（同样 stderr 捕获）
   log_info "  POST $UPLOAD_URL (multipart)"
-  FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH")"
+  FU_RESULT="$(notion_send_file_upload "$UPLOAD_URL" "$COVER_PATH" 2>>"$FU_ERR_LOG")"
   FU_STATUS="$(echo "$FU_RESULT" | jget status)"
   if [ "$FU_STATUS" != "uploaded" ]; then
     log_error "file_upload send 失败 status=$FU_STATUS"
     echo "$FU_RESULT" >&2
+    cat "$FU_ERR_LOG" >&2 2>/dev/null || true
     exit 7
   fi
   log_info "  file_upload status=uploaded ✓"
+  rm -f "$FU_ERR_LOG"
 fi
 
 # ----------------------------------------------------------------------------
