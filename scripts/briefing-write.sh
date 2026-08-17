@@ -184,6 +184,21 @@ for b in data.get("results", []):
     log_info "仅发语音确认（QQBot 通道）"
     cat "$EXISTING_BRIEFINGS_FILE" >&2
     NOTION_HAS_TODAY=1
+    # 2026-08-16 修复：从 EXISTING_BRIEFINGS_FILE 解析 title + page_id，供 Step 12 报告使用
+    # 格式: - 20260816-xxx  (id=3beb7087-4975-8106-82e9-edf363e65294)
+    EXISTING_LINE="$(grep -m1 '^- ' "$EXISTING_BRIEFINGS_FILE" 2>/dev/null || true)"
+    if [ -n "$EXISTING_LINE" ]; then
+      # 2026-08-16 修复：源格式 `- TITLE  (id=PAGE_ID)` 有两个空格，用 bash 参数展开提取（避开 sed -E 转义陷阱）
+      # 提取 title：去掉开头的 `- ` 和 `  (id=...)` 后缀
+      LLM_TITLE="${EXISTING_LINE#- }"
+      LLM_TITLE="${LLM_TITLE%  (id=*}"
+      # 提取 page_id：取 `(id=` 和 `)` 之间的内容
+      EXISTING_PAGE_ID="${EXISTING_LINE##*(id=}"
+      EXISTING_PAGE_ID="${EXISTING_PAGE_ID%)*}"
+      # URL 直接用 raw page_id（Notion 用 32 hex no-dash）
+      NEW_PAGE_URL="https://www.notion.so/${EXISTING_PAGE_ID//-/}"
+      log_info "复用今日已有简报: title=$LLM_TITLE  page_id=$EXISTING_PAGE_ID"
+    fi
   else
     NOTION_HAS_TODAY=0
   fi
@@ -196,6 +211,11 @@ log_section "Step 4: 4-way web_search"
 SEARCH_DIR="${BRIEFING_TMP_DIR}/search-${TODAY_COMPACT}"
 mkdir -p "$SEARCH_DIR"
 SEARCH_FILES=()
+
+# 2026-08-16 修复：NOTION_HAS_TODAY=1 时跳过 4 路 web_search（已写过的页面不需要重查）
+if [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
+  log_info "今日已有简报，跳过 4-way web_search"
+fi
 
 run_search() {
   local label="$1" query="$2"
@@ -217,35 +237,41 @@ run_search() {
 # 4 路并行（SEARCH_FILES 必须在父 shell 预定义 —— 子 shell 中的数组变更不会传回）
 # 2026-08-15 修复：原版在 run_search 函数内做 SEARCH_FILES+=，但 4 路用 & 后台启动，
 # 实际在子 shell 跑，修改不会传回父 shell，导致 SEARCH_OK 永远 = 0，触发 exit 4
-SEARCH_FILES=(
-  "${SEARCH_DIR}/domestic.jsonl"
-  "${SEARCH_DIR}/international.jsonl"
-  "${SEARCH_DIR}/tech_finance.jsonl"
-  "${SEARCH_DIR}/markets.jsonl"
-)
-run_search "domestic"     "$TODAY 中国 国内 重要新闻 头条" &
-PID1=$!
-run_search "international" "$TODAY world top stories breaking news" &
-PID2=$!
-run_search "tech_finance"  "$TODAY 科技 财经 重要新闻 半导体 AI" &
-PID3=$!
-run_search "markets"       "global financial markets $TODAY Fed ECB central bank" &
-PID4=$!
-wait $PID1 $PID2 $PID3 $PID4
+# 2026-08-16 修复：NOTION_HAS_TODAY=1 时整段跳过（已写过的页面不需要重查）
+if [ "${NOTION_HAS_TODAY:-0}" != "1" ]; then
+  SEARCH_FILES=(
+    "${SEARCH_DIR}/domestic.jsonl"
+    "${SEARCH_DIR}/international.jsonl"
+    "${SEARCH_DIR}/tech_finance.jsonl"
+    "${SEARCH_DIR}/markets.jsonl"
+  )
+  run_search "domestic"     "$TODAY 中国 国内 重要新闻 头条" &
+  PID1=$!
+  run_search "international" "$TODAY world top stories breaking news" &
+  PID2=$!
+  run_search "tech_finance"  "$TODAY 科技 财经 重要新闻 半导体 AI" &
+  PID3=$!
+  run_search "markets"       "global financial markets $TODAY Fed ECB central bank" &
+  PID4=$!
+  wait $PID1 $PID2 $PID3 $PID4
 
-# 校验 4 路是否都成功
-SEARCH_OK=0
-for f in "${SEARCH_FILES[@]}"; do
-  if grep -q '"error"' "$f" 2>/dev/null; then
-    log_warn "search file 含 error: $f"
-  else
-    SEARCH_OK=$((SEARCH_OK+1))
+  # 校验 4 路是否都成功
+  SEARCH_OK=0
+  for f in "${SEARCH_FILES[@]}"; do
+    if grep -q '"error"' "$f" 2>/dev/null; then
+      log_warn "search file 含 error: $f"
+    else
+      SEARCH_OK=$((SEARCH_OK+1))
+    fi
+  done
+  log_info "search OK count: $SEARCH_OK / 4"
+  if [ "$SEARCH_OK" -eq 0 ] && [ "$DRY_RUN" != "1" ]; then
+    log_error "4 路 search 全部失败"
+    exit 4
   fi
-done
-log_info "search OK count: $SEARCH_OK / 4"
-if [ "$SEARCH_OK" -eq 0 ] && [ "$DRY_RUN" != "1" ]; then
-  log_error "4 路 search 全部失败"
-  exit 4
+else
+  log_info "今日已有简报，跳过 4-way web_search"
+  SEARCH_OK=4  # 占位，让下游 Step 5 走 NOTION_HAS_TODAY 分支
 fi
 
 # ----------------------------------------------------------------------------
@@ -292,24 +318,28 @@ else
   rm -f "${LLM_OUT}.err"
 fi
 
-# 校验 LLM 输出
-if [ ! -s "$LLM_OUT" ]; then
-  log_error "LLM 输出为空"
-  exit 5
-fi
-briefing_assert_file_size "$LLM_OUT" 100
-LLM_OK=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(1 if d.get("ok") else 0)' "$LLM_OUT" 2>/dev/null || echo 0)
-if [ "${LLM_OK:-0}" != "1" ]; then
-  log_error "LLM 输出 ok!=true"
-  cat "$LLM_OUT" >&2
-  exit 5
-fi
+# 校验 LLM 输出（仅在需要 LLM 的时候 —— NOTION_HAS_TODAY=1 时已用 Step 3 解析的 title/url）
+if [ "${NOTION_HAS_TODAY:-0}" != "1" ]; then
+  if [ ! -s "$LLM_OUT" ]; then
+    log_error "LLM 输出为空"
+    exit 5
+  fi
+  briefing_assert_file_size "$LLM_OUT" 100
+  LLM_OK=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(1 if d.get("ok") else 0)' "$LLM_OUT" 2>/dev/null || echo 0)
+  if [ "${LLM_OK:-0}" != "1" ]; then
+    log_error "LLM 输出 ok!=true"
+    cat "$LLM_OUT" >&2
+    exit 5
+  fi
 
-LLM_TITLE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("title",""))' "$LLM_OUT")
-LLM_BODY=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("body_markdown",""))' "$LLM_OUT")
-log_info "LLM title=$LLM_TITLE  body length=${#LLM_BODY}"
-echo "$LLM_BODY" > "$LLM_MD"
-briefing_assert_file_size "$LLM_MD" 50
+  LLM_TITLE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("title",""))' "$LLM_OUT")
+  LLM_BODY=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("body_markdown",""))' "$LLM_OUT")
+  log_info "LLM title=$LLM_TITLE  body length=${#LLM_BODY}"
+  echo "$LLM_BODY" > "$LLM_MD"
+  briefing_assert_file_size "$LLM_MD" 50
+else
+  log_info "今日已有简报，跳过 LLM 校验（用 Step 3 解析的 title/url）"
+fi
 
 # ----------------------------------------------------------------------------
 # Step 6: 生成封面图
@@ -332,13 +362,28 @@ else
     --aspect-ratio "16:9" \
     --out "$COVER_PATH" 2>"${COVER_PATH}.err"
   RC=$?
+  # 2026-08-16 修复：原 exit 6 在敏感 prompt 时会触发 cron failureAlert，6 次连败。
+  # 现在：失败 → 用中性 prompt 重试 1 次 → 还失败 → 跳过封面继续发布（页面无封面但不阻塞）
   if [ $RC -ne 0 ] || [ ! -s "$COVER_PATH" ]; then
-    log_error "封面图生成失败 exit=$RC — stderr 保留到 ${COVER_PATH}.err，内容打到 stdout 给 OpenClaw 捕获"
-    cat "${COVER_PATH}.err" 2>/dev/null || echo "(.err file empty/missing)"
-    exit 6
+    log_warn "封面图首次生成失败 (exit=$RC),尝试中性 prompt 重试"
+    NEUTRAL_PROMPT="Modern flat-vector editorial illustration for daily news magazine. Abstract composition with subtle motifs: bar charts, line graphs, geometric shapes, network nodes, document icons. 16:9 aspect ratio, soft editorial color palette, magazine-quality, no text, no logos, no people, no flags, no political symbols."
+    rm -f "$COVER_PATH"
+    mmx image generate \
+      --prompt "$NEUTRAL_PROMPT" \
+      --aspect-ratio "16:9" \
+      --out "$COVER_PATH" 2>"${COVER_PATH}.err"
+    RC=$?
+    if [ $RC -ne 0 ] || [ ! -s "$COVER_PATH" ]; then
+      log_warn "封面图中性 prompt 也失败 (exit=$RC),跳过封面继续发布（页面无封面）"
+      cat "${COVER_PATH}.err" 2>/dev/null || echo "(.err file empty/missing)"
+      rm -f "${COVER_PATH}.err" "$COVER_PATH"
+      SKIP_COVER=1
+    fi
   fi
-  rm -f "${COVER_PATH}.err"
-  briefing_assert_file_size "$COVER_PATH" 10240  # 至少 10KB
+  if [ "$SKIP_COVER" != "1" ]; then
+    rm -f "${COVER_PATH}.err"
+    briefing_assert_file_size "$COVER_PATH" 10240  # 至少 10KB
+  fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -402,16 +447,17 @@ fi
 # Step 8: 创建 Notion 页面（用 markdown body）
 # ----------------------------------------------------------------------------
 log_section "Step 8: create Notion page"
-NEW_PAGE_ID=""
-NEW_PAGE_URL=""
-
+# 2026-08-16 修复：不要在这里无条件重置 NEW_PAGE_URL/ID —— Step 3 已为 NOTION_HAS_TODAY=1 填好 URL，
+# 这里重置会把现有页面 URL 清空，导致 Step 12 报告里的 notion_url 为空
 if [ "$DRY_RUN" = "1" ]; then
-  log_info "[dry-run] 跳过 Notion 页面创建"
   NEW_PAGE_ID="DRY-RUN-PAGE-ID"
   NEW_PAGE_URL="https://www.notion.so/clketa/DRY-RUN-PAGE-${TODAY_COMPACT}"
+  log_info "[dry-run] 跳过 Notion 页面创建"
 elif [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
-  log_info "今日已有简报，跳过创建"
+  log_info "今日已有简报，跳过创建（保留 Step 3 解析的 URL）"
 else
+  NEW_PAGE_ID=""
+  NEW_PAGE_URL=""
   log_info "  ntn pages create --parent page:$WEEK_PAGE_ID"
   NEW_PAGE_ID="$(notion_create_page_md "$WEEK_PAGE_ID" "$LLM_MD")" || {
     log_error "Notion 页面创建失败"; exit 8;
@@ -526,9 +572,18 @@ fi
 log_section "Step 11: generate voice"
 VOICE_FILE="${BRIEFING_TMP_DIR}/briefing-${TODAY_COMPACT}-voice.txt"
 
-# 构造语音文本（BRIEFING MODE 顺序：punchline + 标题 + 国内主线 + 国际主线 + 覆盖范围）
-VOICE_COVERAGE=$([ "$IS_MONDAY" = "1" ] && echo "周一含周历" || echo "非周一不含周历")
-VOICE_TEXT="$(python3 -c '
+if [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
+  # 2026-08-16 修复：NOTION_HAS_TODAY=1 时跳过 LLM 解析和语音合成（页面已发，避免误覆盖）
+  log_info "今日已有简报，跳过语音生成（placeholder voice text）"
+  VOICE_TEXT="老板，今日简报已经发了。${TODAY}。标题：${LLM_TITLE}。下游 noon cron 会自动部署到 GitHub Pages。"
+  echo "$VOICE_TEXT" > "$VOICE_FILE"
+  log_info "voice text (placeholder): $VOICE_FILE ($(wc -c < "$VOICE_FILE") bytes)"
+  VOICE_MP3=""
+  SKIP_VOICE=1
+else
+  # 构造语音文本（BRIEFING MODE 顺序：punchline + 标题 + 国内主线 + 国际主线 + 覆盖范围）
+  VOICE_COVERAGE=$([ "$IS_MONDAY" = "1" ] && echo "周一含周历" || echo "非周一不含周历")
+  VOICE_TEXT="$(python3 -c '
 import json, sys
 llm = json.load(open(sys.argv[1]))
 date = sys.argv[2]
@@ -546,13 +601,13 @@ if intl: out.append(f"国际主线：{intl}")
 out.append(f"覆盖范围：已避重 / 已后续标注 / {coverage}")
 print("\n".join(out))
 ' "$LLM_OUT" "$TODAY" "$VOICE_COVERAGE" 2>/dev/null || echo "（语音文本构造失败）")"
-echo "$VOICE_TEXT" > "$VOICE_FILE"
-log_info "voice text: $VOICE_FILE ($(wc -c < "$VOICE_FILE") bytes)"
+  echo "$VOICE_TEXT" > "$VOICE_FILE"
+  log_info "voice text: $VOICE_FILE ($(wc -c < "$VOICE_FILE") bytes)"
 
-if [ "$SKIP_VOICE" = "1" ] || [ "$DRY_RUN" = "1" ]; then
-  log_info "skip-voice 或 dry-run，跳过 mmx speech synthesize"
-  VOICE_MP3=""
-else
+  if [ "$SKIP_VOICE" = "1" ] || [ "$DRY_RUN" = "1" ]; then
+    log_info "skip-voice 或 dry-run，跳过 mmx speech synthesize"
+    VOICE_MP3=""
+  else
   VOICE_MP3="${BRIEFING_MEDIA_DIR}/briefing-${TODAY_COMPACT}-voice.mp3"
   log_info "  mmx speech synthesize ... --out $VOICE_MP3"
   if mmx speech synthesize \
@@ -568,6 +623,7 @@ else
     cat "${VOICE_MP3}.err" >&2 2>/dev/null || true
     rm -f "${VOICE_MP3}.err"
     VOICE_MP3=""
+  fi
   fi
 fi
 
@@ -621,7 +677,10 @@ log_section "DONE"
 log_info "TODAY=$TODAY  LLM_TITLE=$LLM_TITLE  NEW_PAGE_URL=${NEW_PAGE_URL:-}"
 
 # 退出码
+# 2026-08-16 修复：原 NOTION_HAS_TODAY=1 走 exit 12，触发 cron failureAlert（fallback 成功 = 静默）
+# 现在：今日已有简报 = 兜底成功，exit 0 静默；下游 noon cron 12:00 自动部署
 if [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
-  exit 12
+  log_info "今日已有简报，fallback 任务完成（exit 0）"
+  exit 0
 fi
 exit 0

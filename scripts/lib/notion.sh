@@ -38,7 +38,9 @@ notion_api() {
 notion_list_children() {
   local block_id="$1"
   local cursor=""
-  local out="[]"
+  # 2026-08-16 修复：原 out="[]" 是 list，cur["results"] 抛 TypeError 静默吞掉，
+  # pagination 永远不累积，调用方拿到空结果 → Step 3 dedup 失效，fallback 重复写稿
+  local out='{"results": [], "has_more": false, "next_cursor": null}'
   while :; do
     local q=""
     if [ -n "$cursor" ]; then
