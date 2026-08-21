@@ -7,7 +7,7 @@ from datetime import datetime
 NOTION_API = "https://api.notion.com/v1"
 NOTION_TOKEN = os.environ.get("NOTION_API_TOKEN")
 NOTION_VERSION = "2026-03-11"
-YEAR_2026_PAGE_ID = "395b7087-4975-814a-87c4-ed304502a93e"
+YEAR_2026_PAGE_ID = "3c2b7087-4975-81c7-9beb-eb79fbbb5069"
 OUTPUT_DIR = Path("content/post")
 
 
