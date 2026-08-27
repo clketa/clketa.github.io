@@ -176,6 +176,28 @@ def main():
                     continue
                 pid = b["id"]
                 title = b["child_page"]["title"]
+                # Fallback: child_page.title 为空时（body 不以 H1 开头 Notion 不会生成），
+                # 从 page properties.title 取，或 page children 的第一个 heading_1 取
+                if not title:
+                    try:
+                        meta = api(f"pages/{pid}")
+                        rt = meta.get("properties", {}).get("title", {}).get("title", [])
+                        if rt:
+                            title = rt[0].get("plain_text", "")
+                    except Exception:
+                        pass
+                if not title:
+                    try:
+                        pb_res = api(f"blocks/{pid}/children").get("results", [])
+                        for pb in pb_res:
+                            if pb.get("type") == "heading_1":
+                                title = rich_text_to_md(pb["heading_1"]["rich_text"]).lstrip("# ").strip()
+                                break
+                    except Exception:
+                        pass
+                if not title:
+                    print(f"[diag] WARN: 跳过空标题 page {pid}（child_page/properties/heading_1 都为空）", file=sys.stderr)
+                    continue
                 slug = title.replace("/", "-").replace(" ", "_")
                 content = page_to_md(pid, title)
                 out_file = OUTPUT_DIR / f"{slug}.md"
