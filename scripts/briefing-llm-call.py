@@ -46,6 +46,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -184,27 +185,38 @@ DEFAULT_SYSTEM_PROMPT = """你是「苒苒」，老板的私人 AI 助理。
 # 调 mmx text chat 子进程
 # ----------------------------------------------------------------------------
 def call_mmx_text(model: str, system: str, user_msg: str, max_tokens: int, temperature: float) -> str:
-    cmd = [
-        "mmx", "text", "chat",
-        "--model", model,
-        "--message", user_msg,
-        "--system", system,
-        "--max-tokens", str(max_tokens),
-        "--temperature", str(temperature),
-        "--output", "text",
-        "--quiet",
-    ]
+    # 用 --messages-file 把 messages 数组走文件传给 mmx，避免 prompt 大时撞 ARG_MAX
+    # （mmx 内部再 spawn 下游子进程时，--message argv 会被重传，可能超 ARG_MAX）
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": user_msg})
+    tmp_fd, tmp_messages_file = tempfile.mkstemp(suffix=".json", prefix="briefing-msg-")
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 分钟上限
-        )
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"mmx text chat 超时（>{600}s）") from e
-    except FileNotFoundError as e:
-        raise RuntimeError("mmx CLI 未找到（PATH 没 ~/.npm-global/bin）") from e
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False)
+        cmd = [
+            "mmx", "text", "chat",
+            "--model", model,
+            "--messages-file", tmp_messages_file,
+            "--max-tokens", str(max_tokens),
+            "--temperature", str(temperature),
+            "--output", "text",
+            "--quiet",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 分钟上限
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"mmx text chat 超时（>{600}s）") from e
+        except FileNotFoundError as e:
+            raise RuntimeError("mmx CLI 未找到（PATH 没 ~/.npm-global/bin）") from e
+    finally:
+        Path(tmp_messages_file).unlink(missing_ok=True)
     if proc.returncode != 0:
         err = proc.stderr.strip() or proc.stdout.strip()
         raise RuntimeError(f"mmx text chat 失败 exit={proc.returncode}: {err[:500]}")
