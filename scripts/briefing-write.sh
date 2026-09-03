@@ -481,59 +481,12 @@ if [ "$DRY_RUN" = "1" ]; then
 elif [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
   log_info "跳过 summary 插入"
 else
-  # 找页面里 divider block id（在 markdown body 自动生成的位置）
-  log_info "  GET /v1/blocks/$NEW_PAGE_ID/children → 找 divider"
-  CHILDREN_RESP="$(notion_list_children "$NEW_PAGE_ID" 2>/dev/null | head -c 50000)"
-  DIVIDER_ID="$(python3 -c '
-import json, sys
-try:
-    d = json.loads(sys.argv[1])
-    for b in d.get("results", []):
-        if b.get("type") == "divider":
-            print(b["id"])
-            sys.exit(0)
-except Exception:
-    pass
-sys.exit(1)
-' "$CHILDREN_RESP")"
-  if [ -z "$DIVIDER_ID" ]; then
-    log_warn "找不到 divider block（markdown body 可能没生成 divider）"
-    log_info "尝试在页面末尾插入（不指定 position）"
-    DIVIDER_ID=""
-  else
-    log_info "  divider_id=$DIVIDER_ID"
-  fi
-  # 构造 body
-  SUMMARY_INPUT="$(python3 -c '
-import json, sys
-llm = json.load(open(sys.argv[1]))
-divider = sys.argv[2]
-out = {
-  "punchline": llm.get("summary_punchline",""),
-  "domestic_main": llm.get("summary_domestic",""),
-  "international_main": llm.get("summary_international",""),
-  "market_main": llm.get("summary_market",""),
-  "tomorrow_watch": llm.get("tomorrow_watch", []),
-  "divider_id": divider,
-}
-print(json.dumps(out, ensure_ascii=False))
-' "$LLM_OUT" "$DIVIDER_ID")"
-  SUMMARY_BODY_FILE="${BRIEFING_TMP_DIR}/summary-body-${TODAY_COMPACT}.json"
-  echo "$SUMMARY_INPUT" | python3 "${SCRIPT_DIR}/briefing-build-summary.py" > "$SUMMARY_BODY_FILE"
-  # PATCH 插入
-  log_info "  PATCH /v1/blocks/$NEW_PAGE_ID/children"
-  PATCH_RESP="$(curl -sS -X PATCH "${NOTION_API_BASE}/blocks/${NEW_PAGE_ID}/children" \
-    -H "Authorization: Bearer ${NOTION_API_TOKEN}" \
-    -H "Notion-Version: ${NOTION_API_VERSION}" \
-    -H "Content-Type: application/json" \
-    --data-binary "@${SUMMARY_BODY_FILE}")"
-  PATCH_OK="$(echo "$PATCH_RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(1 if "results" in d else 0)' 2>/dev/null || echo 0)"
-  if [ "${PATCH_OK:-0}" != "1" ]; then
-    log_error "summary 插入失败"
-    echo "$PATCH_RESP" >&2
-    exit 9
-  fi
-  log_info "  summary 插入成功"
+  # 2026-09-03 禁掉 📋 今日摘要 module 插入（根治 bug 20260903-summary-json-leak）：
+  #   - 正文顶部 callout + 4 条 bullet 已经是结构化摘要（punchline + 国内主线 + 国际主线 + 市场 + 明日值得关注）
+  #   - Step 9 在 divider 之后再插一份完全相同的模块，渲染时显示两遍
+  #   - 同时 LLM markdown body 末尾会带 ```json { ... } ``` code block，渲染成 <json-viewer> 组件
+  # summary_body 数据已经写到 ${BRIEFING_TMP_DIR}/summary-body-${TODAY_COMPACT}.json，Notion 页面里不需要重复
+  log_info "[disabled 2026-09-03] 跳过 summary module 插入（正文已有摘要 + LLM markdown body 自带 json code block）"
 fi
 
 # ----------------------------------------------------------------------------
