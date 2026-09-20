@@ -342,6 +342,35 @@ else
 fi
 
 # ----------------------------------------------------------------------------
+# Step 5.5: 内容重叠校验（拒绝 LLM 复用前几日简报）
+# ----------------------------------------------------------------------------
+# 2026-09-20 踩坑定型：周末 LLM web_search 命中薄时，会把昨日/前日内容套到今天
+# 标题 + slug 上，看起来「今日发了」其实内容是前几日复刻（jaccard > 0.5）。
+# 此 step 把 LLM 输出跟 content/post/ 下最近 3 篇做 token 级 Jaccard 相似度，
+# 任一篇 > 0.5 → exit 13（cron failureAlert 推 qqbot）。
+# ----------------------------------------------------------------------------
+log_section "Step 5.5: content overlap check"
+
+if [ "$DRY_RUN" = "1" ]; then
+  log_info "[dry-run] 跳过 overlap check"
+elif [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
+  log_info "跳过 overlap check（已 dedup）"
+elif [ "${SKIP_OVERLAP_CHECK:-0}" = "1" ]; then
+  log_info "跳过 overlap check（SKIP_OVERLAP_CHECK=1）"
+else
+  CONTENT_DIR="${SCRIPT_DIR}/../content/post"
+  OVERLAP_OUT="$(echo "$LLM_BODY" | python3 "${SCRIPT_DIR}/check-content-overlap.py" "$TODAY_COMPACT" "$CONTENT_DIR" 3 2>/dev/null)"
+  OVERLAP_EXIT=$?
+  OVERLAP_SIM="$(echo "$OVERLAP_OUT" | cut -d'|' -f1)"
+  OVERLAP_MATCH="$(echo "$OVERLAP_OUT" | cut -d'|' -f2)"
+  if [ "$OVERLAP_EXIT" = "13" ]; then
+    log_error "LLM 输出与 ${OVERLAP_MATCH} 内容相似度 ${OVERLAP_SIM} >= 0.5 — 拒绝写入（疑似内容复刻）"
+    exit 13
+  fi
+  log_info "overlap check ok: max similarity ${OVERLAP_SIM} vs ${OVERLAP_MATCH}"
+fi
+
+# ----------------------------------------------------------------------------
 # Step 6: 生成封面图
 # ----------------------------------------------------------------------------
 log_section "Step 6: generate cover image"
