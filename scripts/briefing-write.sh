@@ -164,20 +164,14 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "(dry-run: 无已有简报数据)" > "$EXISTING_BRIEFINGS_FILE"
 else
   CHILDREN_JSON="$(notion_list_children "$WEEK_PAGE_ID")"
-  # 提取所有 child_page 的 id + title
-  python3 -c '
-import json, sys
-data = json.loads(sys.argv[1])
-target = sys.argv[2]
-for b in data.get("results", []):
-    if b.get("type") == "child_page":
-        title = b.get("child_page", {}).get("title", "")
-        bid = b.get("id", "")
-        if title.startswith(target):
-            print(f"- {title}  (id={bid})")
-' "$CHILDREN_JSON" "$TODAY_COMPACT" >> "$EXISTING_BRIEFINGS_FILE"
+  # 2026-09-20 增强：dedup 加 title vs body 编制日期一致性校验
+  # 之前 bug: 9-18 cron 写过一条 title=20260920 body=2026-09-18 的孤儿 page，
+  # 9-20 cron 误判 dedup 跳过，错的页面被部署上线。
+  # 修法: 对每条 child_page with TODAY prefix，fetch body 第一个 quote block 的编制日期，
+  #       不一致 = orphan, exclude from dedup, 让今天继续走正常写稿流程
+  echo "$CHILDREN_JSON" | python3 "${SCRIPT_DIR}/check-existing-page-date.py" "$TODAY" >> "$EXISTING_BRIEFINGS_FILE" 2>"${BRIEFING_TMP_DIR}/orphans-${TODAY_COMPACT}.log"
   EXISTING_COUNT="$(grep -c '^- ' "$EXISTING_BRIEFINGS_FILE" || true)"
-  log_info "本周已发今日前缀 ($TODAY_COMPACT-*) 简报数: $EXISTING_COUNT"
+  log_info "本周已发今日前缀 (title AND body date=$TODAY) 简报数: $EXISTING_COUNT"
   # 如果今天已经发过，跳过写稿
   if [ "${EXISTING_COUNT:-0}" -gt 0 ]; then
     log_warn "今日 ($TODAY_COMPACT) 已有简报 $EXISTING_COUNT 篇，skip 写稿 + 上传"
