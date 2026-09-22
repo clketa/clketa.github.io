@@ -1,0 +1,19 @@
+/* ============================================================================
+ * Briefing site custom CSS — 2026-09-21 老板抓包修
+ * ----------------------------------------------------------------------------
+ * LLM 在 briefing markdown 末尾会自己加一个 ```json``` code block（"title +
+ * punchline + 主线" 结构化备份），Step 9 summary module 早在 9-3 已禁掉但
+ * 这段是 LLM body 自带的、绕过了修。FixIt 主题把它渲染成 <json-viewer> 自定义
+ * 元素挂在每篇简报底部。直接 display:none 隐藏即可，不影响正文 / 代码块。
+ * ============================================================================ */
+
+/* 隐藏 LLM 自动生成的 summary JSON（FixIt 把它渲染成 <json-viewer> 自定义元素） */
+json-viewer {
+  display: none !important;
+}
+
+/* 兜底：如果哪天 markdown 里直接放 ```json``` 没被 FixIt 转成 json-viewer，
+   也走标准 <pre><code class="language-json"> 渲染，一并隐藏 */
+pre > code.language-json {
+  display: none !important;
+}
