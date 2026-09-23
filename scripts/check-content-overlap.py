@@ -17,17 +17,49 @@ from pathlib import Path
 
 
 def tokenize(text: str) -> set:
-    """strip front-matter + 3 metadata quotes + H1 + image markup; tokenize Chinese chars + English words + numbers"""
+    """strip front-matter + metadata + H1 + template skeleton; tokenize Chinese chars + English words + numbers.
+
+    2026-09-23 fix：token-level jaccard 把模板化 token 算进 overlap（'国内主线' / '国际主线' /
+    '市场与隐忧' / '明日值得关注' / '## 🇨🇳 国内要闻' / '### 1.' / '**发生了什么**' / '**苒苒按**' / '📎 原文链接'
+    这些骨架词所有 briefing 都有），造成 jaccard 必然 > 0.5 误报。
+    现额外 strip markdown 标题 + bold + bullet/number markers，让 token set 只含**实际新闻内容**
+    """
     # strip YAML front-matter
     text = re.sub(r"^---[\s\S]*?---\s*", "", text)
-    # strip first 3 leading quote blocks (编制/立场/信息源) — they vary by date
+    # strip first 3 leading quote blocks (编制/立场/信息源)
     text = re.sub(r"(?:^> [^\n]*\n){1,5}", "", text, count=1)
     # strip H1 title
     text = re.sub(r"^# [^\n]*\n", "", text)
+    # strip ALL heading lines (## / ###) — section/subsection 标题骨架，所有 briefing 一样
+    text = re.sub(r"^#{1,6}\s+[^\n]*\n", "", text, flags=re.MULTILINE)
+    # strip all bold inline markers **...** — **发生了什么** / **苒苒按** / **国内主线：**
+    text = re.sub(r"\*\*[^*]+\*\*", "", text)
+    # strip bullet/number markers at line start (- / • / 1. / 2. ...)
+    text = re.sub(r"^[ \t]*[-\u2022]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[ \t]*\d+\.\s+", "", text, flags=re.MULTILINE)
     # strip markdown image syntax ![alt](url)
     text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
     # strip markdown link markup, keep URL text only
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    # strip template-only section 标题骨架 (这些是固定短语）
+    # 	苒苒一句话 / 发生了什么 / 苒苒按 / 原文链接 / 国内主线 / 国际主线 / 市场与隐忧
+    # 	明日值得关注 / 覆盖范围
+    template_skeleton = (
+        "苒苒一句话",
+        "发生了什么",
+        "苒苒按",
+        "原文链接",
+        "国内主线",
+        "国际主线",
+        "市场与隐忧",
+        "明日值得关注",
+        "覆盖范围",
+        "已避重",
+        "已后续标注",
+        "非周一不含周历",
+    )
+    for token in template_skeleton:
+        text = text.replace(token, " ")
     # tokenize: Chinese chars each as token, English words + numbers grouped
     tokens = set(re.findall(r"[\u4e00-\u9fff]|[A-Za-z]+|[0-9]+", text))
     return tokens

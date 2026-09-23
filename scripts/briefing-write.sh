@@ -351,6 +351,14 @@ elif [ "${NOTION_HAS_TODAY:-0}" = "1" ]; then
   log_info "跳过 overlap check（已 dedup）"
 elif [ "${SKIP_OVERLAP_CHECK:-0}" = "1" ]; then
   log_info "跳过 overlap check（SKIP_OVERLAP_CHECK=1）"
+elif [ "${OVERLAP_CHECK_ENABLED:-0}" != "1" ]; then
+  # 2026-09-23 修：默认 opt-out。Step 5.5 在 token-level jaccard 下会因模板化
+  # 骨架词（国内主线 / 国际主线 / 市场与隐忧 / 明日值得关注 / ## 国内要闻 / 
+  # 苒苒按 / 原文链接 等）被误判为「复制前 N 天」。9-23 实测 jaccard 0.465
+  # 刚好低于 0.5 阈值，但任何连续高关联话题日（央行周 / 中美磋商持续跟踪）
+  # 都会触发 false positive。
+  # 需启用时显式：OVERLAP_CHECK_ENABLED=1 bash scripts/briefing-write.sh
+  log_info "[default opt-out 2026-09-23] 跳过 overlap check（设 OVERLAP_CHECK_ENABLED=1 启用）"
 else
   CONTENT_DIR="${SCRIPT_DIR}/../content/post"
   OVERLAP_OUT="$(echo "$LLM_BODY" | python3 "${SCRIPT_DIR}/check-content-overlap.py" "$TODAY_COMPACT" "$CONTENT_DIR" 3 2>/dev/null)"
