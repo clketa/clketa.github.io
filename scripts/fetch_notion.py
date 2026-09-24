@@ -11,6 +11,30 @@ YEAR_2026_PAGE_ID = "3c2b7087-4975-81c7-9beb-eb79fbbb5069"
 OUTPUT_DIR = Path("content/post")
 
 
+def strip_trailing_json_block(content: str) -> str:
+    """Strip a trailing ```json``` code block from markdown body before publishing.
+
+    2026-09-24 修复：LLM 习惯在 markdown 末尾追加 JSON 备份 block（title +
+    punchline + 主线 结构化数据），但 minimax safety filter 会把这段 JSON 判
+    sensitive（错误码 1027）拒输出 → cron exit 5。
+
+    兑底逻辑：即使 LLM 仍生成末尾 JSON，也从 publish 出去的文件里剥掉。
+    前端 CSS（9-21 加的 json-viewer{display:none}）已经是视觉兑底，本函数
+    从源头修。
+
+    容忍几种变体：
+    - 末尾 ```json 或 ```JSON（大小写）
+    - 前面可能有一个 `---` 分隔线
+    - 中间有任意换行/空白
+    """
+    import re
+    pattern = re.compile(
+        r"\n+\s*(?:---\s*\n)?\s*```(?:json|JSON)\b.*?```\s*\Z",
+        re.DOTALL,
+    )
+    return pattern.sub("", content).rstrip() + "\n"
+
+
 def api(path, **params):
     url = f"{NOTION_API}/{path}"
     if params:
@@ -200,6 +224,7 @@ def main():
                     continue
                 slug = title.replace("/", "-").replace(" ", "_")
                 content = page_to_md(pid, title)
+                content = strip_trailing_json_block(content)  # 2026-09-24 修复：兑底剥离末尾 ```json``` code block
                 out_file = OUTPUT_DIR / f"{slug}.md"
                 out_file.write_text(content)
                 print(f"OK {out_file} ({len(content)} bytes)", file=sys.stderr)

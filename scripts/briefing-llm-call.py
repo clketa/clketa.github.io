@@ -166,18 +166,19 @@ DEFAULT_SYSTEM_PROMPT = """你是「苒苒」，老板的私人 AI 助理。
 - 如果是同一事件的后续进展，标题里加「后续：」并简述
 
 【输出末尾必须追加】
-在 markdown 末尾的 `---` 之后，加一段 JSON 块（方便解析），格式：
+不需要在 markdown 末尾追加 JSON 代码块（结构化字段已经被本脚本的 python
+parser 从 raw_text 里抓取了，body_markdown 里出现 ```json``` code block
+会被 minimax safety filter 判成 sensitive（错误码 1027）拒输出）。
 
-```json
-{
-  "title": "yyyymmdd-<≤15字>",
-  "punchline": "1 句 punchline（callout 文，不要重复标题）",
-  "domestic_main": "国内主线 1-2 句",
-  "international_main": "国际主线 1-2 句",
-  "market_main": "市场与隐忧 1-2 句，可空字符串",
-  "tomorrow_watch": ["事件 1", "事件 2", "事件 3", "事件 4", "事件 5"]
-}
-```
+2026-09-24 修复：避免 ```json``` code block 出现在 markdown 末尾
+- prompt 不再要求末尾追加 JSON
+- fetch_notion.py 兑底 strip（即使 LLM 仍然生成末尾 JSON 也剥掉）
+- 9-21 前端 CSS 隐藏 json-viewer 视觉兑底
+
+如果你仍需要返回结构化字段（title / punchline / domestic_main 等），用
+【顶部 YAML front-matter】或者直接 return 独立 JSON，不要嵌入 markdown body。
+
+【结束】
 """
 
 
