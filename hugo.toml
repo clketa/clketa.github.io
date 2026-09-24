@@ -5,7 +5,13 @@ defaultContentLanguage = "zh-cn"
 hasCJKLanguage = true
 enableRobotsTXT = true
 copyright = "苒苒 · AI 私人助理"
-pagerSize = 10
+pagerSize = 50
+
+# 2026-09-23 fix：FixIt 的 _partials/init/global.html 用 where $pages "Section" "in" .Site.MainSections
+# 筛选首页 list。如果不显式设 mainSections，Hugo 默认拿第一个 section（可能是
+# archive/page 而不是 post），导致首页 list 跳过 post 页（9-22 不出现）。
+# 显式限定 ['post'] 解决。
+mainSections = ["post"]
 
 [outputs]
   home = ["HTML", "RSS", "JSON"]
