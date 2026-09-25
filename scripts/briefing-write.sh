@@ -300,6 +300,7 @@ else
   USER_PROMPT="请写今天的简报（$TODAY，${WEEK_TAG}，$( [ "$IS_MONDAY" = "1" ] && echo "周一（含本周日历）" || echo "非周一（不含本周日历）")）。"
   python3 "${SCRIPT_DIR}/briefing-llm-call.py" \
     --user "$USER_PROMPT" \
+    --today "$TODAY_COMPACT" \
     --search-files "${SEARCH_FILES[@]}" \
     --existing-briefings "$EXISTING_BRIEFINGS_FILE" \
     --output "$LLM_OUT" 2>"${LLM_OUT}.err"

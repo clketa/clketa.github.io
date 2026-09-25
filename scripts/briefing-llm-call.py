@@ -231,6 +231,22 @@ JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
 TITLE_RE = re.compile(r"^#\s+(\d{8}-.{1,30})", re.MULTILINE)
 
 
+def force_title_date(title: str, today_compact: str) -> str:
+    """2026-09-25 fix：强制把 title 日期前缀改成 today_compact，忽略 LLM 生成的日期。
+
+    LLM 偶尔会生硬写一个错误日期（比如 9-25 cron 写了 9-29），prompt 明确要求
+    yyyymmdd 是今天日期但 LLM 不一定听。python post-process 强制覆盖比 prompt 可靠。
+
+    只能提取"yyyy-mm-dd<rest>" 格式中的 <rest> 部分，重新拼接 today_compact 前缀。
+    如果 LLM 写的 title 不符合这个格式，原样返回。
+    """
+    import re as _re
+    m = _re.match(r"^(\d{8})-(.+)$", title.strip())
+    if m:
+        return f"{today_compact}-{m.group(2).strip()}"
+    return title
+
+
 def parse_structured_fields(raw_text: str) -> dict:
     """从 LLM 输出末尾的 ```json 块提取结构化字段"""
     result = {
@@ -332,6 +348,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--search-files", nargs="*", default=[])
     parser.add_argument("--existing-briefings", default="")
+    parser.add_argument("--today", default=time.strftime("%Y%m%d"), help="今天日期 yyyymmdd，用于强制覆盖 LLM 生成的 title 日期前缀")
     parser.add_argument("--output", default="-", help="输出 JSON 文件路径，- 表示 stdout")
     args = parser.parse_args()
 
@@ -363,6 +380,12 @@ def main():
         return 1
 
     fields = parse_structured_fields(raw)
+    # 2026-09-25 fix：强制覆盖 title 日期前缀。LLM 偶尔会生硕错日期（9-25 写了 9-29），
+    # prompt 说了 yyyymmdd 是今天日期 LLM 不一定听。python post-process 可靠 100%。
+    original_title = fields["title"]
+    fields["title"] = force_title_date(original_title, args.today)
+    if original_title and fields["title"] != original_title:
+        print(f"[fix] title date overridden: {original_title!r} → {fields['title']!r}", file=sys.stderr)
     out["ok"] = True
     out["raw_text"] = raw
     out["title"] = fields["title"]

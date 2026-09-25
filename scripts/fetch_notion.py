@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """fetch_notion.py - 从 Notion 抓取简报，导出为 Hugo markdown"""
-import os, sys, json, urllib.request, urllib.parse
+import os, sys, json, time, urllib.request, urllib.parse
 from pathlib import Path
 from datetime import datetime
 
@@ -229,6 +229,53 @@ def main():
                 out_file.write_text(content)
                 print(f"OK {out_file} ({len(content)} bytes)", file=sys.stderr)
                 total += 1
+
+        # 2026-09-25 fix：W39 children API indexing 延迟兑底。9-25 实测 children 只返 1 篇
+        # （9-21），但 W39 下其实有 4 篇 page（含 9-25/9-22/9-23）。Notion API 是增量 indexing
+        # 的，children API 不一定及时更新。如果主循环拉完后今天日期前缀不在已拉 titles 里，
+        # 走 POST /v1/search 按 today 8位前缀倒查。今天 page 能找到 parent 是某个 Wxx 就补拉。
+        today_compact = time.strftime("%Y%m%d", time.localtime())
+        fetched_titles = [b["child_page"]["title"] for b in briefings if b.get("type") == "child_page"]
+        if not any(t.startswith(today_compact) for t in fetched_titles):
+            print(f"[diag] WARN: 今天 {today_compact} 不在 W39 children 拉取结果中，启用 POST /v1/search 兑底", file=sys.stderr)
+            try:
+                search_req = urllib.request.Request(
+                    f"https://api.notion.com/v1/search",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {NOTION_TOKEN}",
+                        "Notion-Version": NOTION_VERSION,
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
+                )
+                search_res = json.loads(urllib.request.urlopen(search_req).read())
+                for r in search_res.get("results", []):
+                    if r.get("object") != "page":
+                        continue
+                    rt = r.get("properties", {}).get("title", {}).get("title", [])
+                    ptitle = "".join(t.get("plain_text", "") for t in rt)
+                    parent = r.get("parent", {})
+                    if not ptitle.startswith(today_compact):
+                        continue
+                    # 只拉 parent 是某个已处理 Wxx page 的（避免拉别处无关 page）
+                    parent_id = parent.get("page_id") or parent.get("id")
+                    if parent_id not in [w["id"] for w in weeks]:
+                        continue
+                    if any(t.startswith(today_compact) for t in fetched_titles):
+                        # 已跳过（另一个 search result 补上）
+                        break
+                    slug = ptitle.replace("/", "-").replace(" ", "_")
+                    content = page_to_md(r["id"], ptitle)
+                    content = strip_trailing_json_block(content)
+                    out_file = OUTPUT_DIR / f"{slug}.md"
+                    out_file.write_text(content)
+                    print(f"OK [search fallback] {out_file} ({len(content)} bytes)", file=sys.stderr)
+                    total += 1
+                    fetched_titles.append(ptitle)
+            except Exception as e:
+                print(f"[diag] search fallback ERR: {type(e).__name__}: {e}", file=sys.stderr)
+
         # stdout: clean summary only — cron delivery pushes this to channel
         print(f"✅ daily-briefing fetched: {total} briefings from {len(weeks)} weeks")
     except urllib.error.HTTPError as e:
