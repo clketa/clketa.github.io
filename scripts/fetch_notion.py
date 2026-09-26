@@ -131,7 +131,7 @@ def table_to_md(rows):
     return "\n".join(md_rows) + "\n\n"
 
 
-def blocks_to_md(blocks, indent=0):
+def blocks_to_md(blocks, indent=0, today_compact=None):
     out = []
     for b in blocks:
         t = b["type"]
@@ -141,6 +141,10 @@ def blocks_to_md(blocks, indent=0):
                 out.append("  " * indent + txt + "\n\n")
         elif t == "heading_1":
             txt = rich_text_to_md(b["heading_1"]["rich_text"])
+            # 2026-09-27 防御：强制覆盖 heading_1 日期前缀，避免 LLM 偶尔生硕错日期
+            # 透到 markdown body（9-25 案例：Notion blocks 里如果有 heading_1 # 20260929-...）
+            if today_compact:
+                txt = force_title_date(txt, today_compact)
             out.append("  " * indent + f"# {txt}\n\n")
         elif t == "heading_2":
             txt = rich_text_to_md(b["heading_2"]["rich_text"])
@@ -192,11 +196,23 @@ def blocks_to_md(blocks, indent=0):
     return "".join(out)
 
 
-def page_to_md(page_id, title):
+def page_to_md(page_id, title, created_time=None, today_compact=None):
     blocks = fetch_all_children(page_id)
-    body = blocks_to_md(blocks)
+    if today_compact is None:
+        today_compact = time.strftime("%Y%m%d", time.localtime())
+    body = blocks_to_md(blocks, today_compact=today_compact)
     safe_title = json.dumps(title, ensure_ascii=False)
-    front_matter = f"---\ntitle: {safe_title}\ndate: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')}\ndraft: false\n---\n\n"
+    # 2026-09-27 修复：date 字段用 Notion page created_time（不用 datetime.now()），
+    # 避免每次 fetch 重写所有 85 份简报 date 字段 → JSON-LD datePublished 变成 fetch 时间
+    if created_time:
+        # Notion ISO 8601 (e.g. "2026-09-22T12:19:00.000Z") → 转 Asia/Shanghai
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        dt = _dt.fromisoformat(created_time.replace('Z', '+00:00'))
+        dt_sh = dt.astimezone(_tz(_td(hours=8)))
+        date_str = dt_sh.strftime('%Y-%m-%dT%H:%M:%S+08:00')
+    else:
+        date_str = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+    front_matter = f"---\ntitle: {safe_title}\ndate: {date_str}\ndraft: false\n---\n\n"
     return front_matter + body
 
 
@@ -248,7 +264,7 @@ def run_search_fallback(weeks: list, today_compact: str) -> tuple:
             continue
         slug = ptitle.replace("/", "-").replace(" ", "_")
         try:
-            content = page_to_md(r["id"], ptitle)
+            content = page_to_md(r["id"], ptitle, created_time=r.get("created_time"))
             content = strip_trailing_json_block(content)
             out_file = OUTPUT_DIR / f"{slug}.md"
             if out_file.exists():
@@ -301,7 +317,7 @@ def run_search_fallback_after_main_loop_crash():
         if out_file.exists():
             continue
         try:
-            content = page_to_md(r["id"], ptitle)
+            content = page_to_md(r["id"], ptitle, created_time=r.get("created_time"))
             content = strip_trailing_json_block(content)
             out_file.write_text(content)
             print(f"OK [crash fallback] {out_file} ({len(content)} bytes)", file=sys.stderr)
@@ -375,7 +391,14 @@ def main():
                     print(f"[diag] WARN: 跳过空标题 page {pid}（child_page/properties/heading_1 都为空）", file=sys.stderr)
                     continue
                 slug = title.replace("/", "-").replace(" ", "_")
-                content = page_to_md(pid, title)
+                # 2026-09-27：抓 created_time 用作 front-matter date （避免 datetime.now() 重写 date 字段）
+                created_time = None
+                try:
+                    meta = api(f"pages/{pid}")
+                    created_time = meta.get("created_time")
+                except Exception:
+                    pass
+                content = page_to_md(pid, title, created_time=created_time)
                 content = strip_trailing_json_block(content)  # 2026-09-24 修复：兑底剥离末尾 ```json``` code block
                 out_file = OUTPUT_DIR / f"{slug}.md"
                 out_file.write_text(content)

@@ -163,7 +163,16 @@ def main():
     body = blocks_to_md(blocks)
 
     safe_title = json.dumps(title, ensure_ascii=False)
-    front_matter = f"---\ntitle: {safe_title}\ndate: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')}\ndraft: false\n---\n\n"
+    # 2026-09-27 修复：date 字段用 Notion page created_time，不是 datetime.now()。
+    # 避免重 fetch 时所有 markdown date 被重写成 fetch 时间。
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    created_time = page.get("created_time")
+    if created_time:
+        dt = _dt.fromisoformat(created_time.replace('Z', '+00:00'))
+        date_str = dt.astimezone(_tz(_td(hours=8))).strftime('%Y-%m-%dT%H:%M:%S+08:00')
+    else:
+        date_str = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+08:00')
+    front_matter = f"---\ntitle: {safe_title}\ndate: {date_str}\ndraft: false\n---\n\n"
     output_path.write_text(front_matter + body, encoding="utf-8")
     print(f"OK {output_path} ({len(front_matter + body)} bytes)  title={title!r}")
 
