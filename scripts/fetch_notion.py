@@ -36,6 +36,14 @@ def strip_trailing_json_block(content: str) -> str:
 
 
 def api(path, **params):
+    """调 Notion API，自动 retry 429 / 5xx / timeout（backoff 1s, 5s, 16s）
+
+    2026-09-26 修复：原版只 print 后 raise，外层 main() 遇到 429 就 sys.exit(3)，
+    search 兑底逻辑根本来不及跑。加 retry 让 429 / 5xx 能自动恢复。
+
+    使用限量谪复：429/5xx/timeout 退避 1s/5s/16s，上限 3 次。其他 HTTP error 
+    (404/401/403) 不重试，直接 raise。
+    """
     url = f"{NOTION_API}/{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -44,12 +52,32 @@ def api(path, **params):
         "Authorization": f"Bearer {NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
     })
-    try:
-        with urllib.request.urlopen(req) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        print(f"[diag] HTTPError on {path}: {e.code} {e.reason}", file=sys.stderr)
-        raise
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            last_err = e
+            body = e.read().decode("utf-8", errors="replace")[:300]
+            # 429 / 5xx 才重试；4xx (除 429) 直接 raise
+            if e.code == 429 or 500 <= e.code < 600:
+                backoff = [1, 5, 16][attempt]
+                print(f"[diag] retryable HTTPError {e.code} on {path} (attempt {attempt+1}/3, backoff {backoff}s): {body}", file=sys.stderr)
+                time.sleep(backoff)
+                continue
+            else:
+                print(f"[diag] non-retryable HTTPError {e.code} on {path}: {body}", file=sys.stderr)
+                raise
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            backoff = [1, 5, 16][attempt]
+            print(f"[diag] URLError/timeout on {path} (attempt {attempt+1}/3, backoff {backoff}s): {e}", file=sys.stderr)
+            time.sleep(backoff)
+            continue
+    # 3 次都失败，raise 最后一次错误
+    print(f"[diag] API retry exhausted after 3 attempts on {path}", file=sys.stderr)
+    raise last_err
 
 
 def fetch_all_children(block_id):
@@ -172,6 +200,130 @@ def page_to_md(page_id, title):
     return front_matter + body
 
 
+def run_search_fallback(weeks: list, today_compact: str) -> tuple:
+    """2026-09-25 fix：W39 children API indexing 延迟兑底。
+
+    主循环拉完后，如果 today 8位前缀不在已拉 titles 里，走 POST /v1/search 倒查。
+    9-26 升级：抽成独立函数，主循环崩了也能调。
+    Returns:
+        (fetched_count, bytes_written) 供 main() 更新 total 计数。
+    """
+    if not weeks:
+        return (0, 0)
+    # 检查今天 markdown 是否已在 content/post/ 里（避免重复拉）
+    existing = list(OUTPUT_DIR.glob(f"{today_compact}-*.md"))
+    if existing:
+        print(f"[diag] today markdown already exists, skip search: {[p.name for p in existing]}", file=sys.stderr)
+        return (0, 0)
+    print(f"[diag] WARN: 今天 {today_compact} 不在 W39 children 拉取结果中，启用 POST /v1/search 兑底", file=sys.stderr)
+    try:
+        search_req = urllib.request.Request(
+            f"https://api.notion.com/v1/search",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Notion-Version": NOTION_VERSION,
+                "Content-Type": "application/json",
+            },
+            data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
+        )
+        search_res = json.loads(urllib.request.urlopen(search_req, timeout=30).read())
+    except Exception as e:
+        print(f"[diag] search fallback ERR: {type(e).__name__}: {e}", file=sys.stderr)
+        return (0, 0)
+
+    week_ids = {w["id"] for w in weeks}
+    fetched = 0
+    bytes_written = 0
+    for r in search_res.get("results", []):
+        if r.get("object") != "page":
+            continue
+        rt = r.get("properties", {}).get("title", {}).get("title", [])
+        ptitle = "".join(t.get("plain_text", "") for t in rt)
+        parent = r.get("parent", {})
+        if not ptitle.startswith(today_compact):
+            continue
+        parent_id = parent.get("page_id") or parent.get("id")
+        if parent_id not in week_ids:
+            continue
+        slug = ptitle.replace("/", "-").replace(" ", "_")
+        try:
+            content = page_to_md(r["id"], ptitle)
+            content = strip_trailing_json_block(content)
+            out_file = OUTPUT_DIR / f"{slug}.md"
+            if out_file.exists():
+                continue
+            out_file.write_text(content)
+            print(f"OK [search fallback] {out_file} ({len(content)} bytes)", file=sys.stderr)
+            fetched += 1
+            bytes_written += len(content)
+        except Exception as e:
+            print(f"[diag] search fallback write ERR for {r['id']}: {type(e).__name__}: {e}", file=sys.stderr)
+    return (fetched, bytes_written)
+
+
+def run_search_fallback_after_main_loop_crash():
+    """2026-09-26 fix：主循环崩了（429 / 5xx / network）也触发 search 兑底。
+
+    之前 search fallback 写在主循环跑完后，主循环 crash 就不会跑。9-26 实测：
+    noon cron fetch_notion 第一个 API call 就 429 crash，整个主循环都没跑完，
+    search fallback 没机会触发。
+
+    主循环 crash 后无法读 `weeks` 变量，跳过 Wxx filter，全局 search Notion 找今天 page。
+    跳过已存在的 markdown 文件避免重复拉。
+    """
+    print("[diag] main loop crashed, attempting search fallback without Wxx filter...", file=sys.stderr)
+    today_compact = time.strftime("%Y%m%d", time.localtime())
+    try:
+        search_req = urllib.request.Request(
+            f"https://api.notion.com/v1/search",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {NOTION_TOKEN}",
+                "Notion-Version": NOTION_VERSION,
+                "Content-Type": "application/json",
+            },
+            data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
+        )
+        search_res = json.loads(urllib.request.urlopen(search_req, timeout=30).read())
+    except Exception as e:
+        print(f"[diag] crash fallback search ERR: {type(e).__name__}: {e}", file=sys.stderr)
+        return
+    for r in search_res.get("results", []):
+        if r.get("object") != "page":
+            continue
+        rt = r.get("properties", {}).get("title", {}).get("title", [])
+        ptitle = "".join(t.get("plain_text", "") for t in rt)
+        if not ptitle.startswith(today_compact):
+            continue
+        slug = ptitle.replace("/", "-").replace(" ", "_")
+        out_file = OUTPUT_DIR / f"{slug}.md"
+        if out_file.exists():
+            continue
+        try:
+            content = page_to_md(r["id"], ptitle)
+            content = strip_trailing_json_block(content)
+            out_file.write_text(content)
+            print(f"OK [crash fallback] {out_file} ({len(content)} bytes)", file=sys.stderr)
+        except Exception as e:
+            print(f"[diag] crash fallback write ERR: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def write_today_summary():
+    """2026-09-26 P1：告诉 healthcheck 今天的 markdown 到底在不在 content/post/。
+
+    输出 TODAY_IN_POST=true|false 到 stderr，让 noon cron / healthcheck 能
+    精准判断。今天的简报没在 content/post/ → healthcheck 应 ALARM。
+    """
+    today_compact = time.strftime("%Y%m%d", time.localtime())
+    matches = list(OUTPUT_DIR.glob(f"{today_compact}-*.md"))
+    if matches:
+        names = [p.name for p in matches]
+        print(f"[summary] TODAY_IN_POST=true count={len(matches)} files={names}", file=sys.stderr)
+    else:
+        print(f"[summary] TODAY_IN_POST=false today={today_compact}", file=sys.stderr)
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     # 诊断输出
@@ -235,59 +387,28 @@ def main():
         # 的，children API 不一定及时更新。如果主循环拉完后今天日期前缀不在已拉 titles 里，
         # 走 POST /v1/search 按 today 8位前缀倒查。今天 page 能找到 parent 是某个 Wxx 就补拉。
         today_compact = time.strftime("%Y%m%d", time.localtime())
-        fetched_titles = [b["child_page"]["title"] for b in briefings if b.get("type") == "child_page"]
-        if not any(t.startswith(today_compact) for t in fetched_titles):
-            print(f"[diag] WARN: 今天 {today_compact} 不在 W39 children 拉取结果中，启用 POST /v1/search 兑底", file=sys.stderr)
-            try:
-                search_req = urllib.request.Request(
-                    f"https://api.notion.com/v1/search",
-                    method="POST",
-                    headers={
-                        "Authorization": f"Bearer {NOTION_TOKEN}",
-                        "Notion-Version": NOTION_VERSION,
-                        "Content-Type": "application/json",
-                    },
-                    data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
-                )
-                search_res = json.loads(urllib.request.urlopen(search_req).read())
-                for r in search_res.get("results", []):
-                    if r.get("object") != "page":
-                        continue
-                    rt = r.get("properties", {}).get("title", {}).get("title", [])
-                    ptitle = "".join(t.get("plain_text", "") for t in rt)
-                    parent = r.get("parent", {})
-                    if not ptitle.startswith(today_compact):
-                        continue
-                    # 只拉 parent 是某个已处理 Wxx page 的（避免拉别处无关 page）
-                    parent_id = parent.get("page_id") or parent.get("id")
-                    if parent_id not in [w["id"] for w in weeks]:
-                        continue
-                    if any(t.startswith(today_compact) for t in fetched_titles):
-                        # 已跳过（另一个 search result 补上）
-                        break
-                    slug = ptitle.replace("/", "-").replace(" ", "_")
-                    content = page_to_md(r["id"], ptitle)
-                    content = strip_trailing_json_block(content)
-                    out_file = OUTPUT_DIR / f"{slug}.md"
-                    out_file.write_text(content)
-                    print(f"OK [search fallback] {out_file} ({len(content)} bytes)", file=sys.stderr)
-                    total += 1
-                    fetched_titles.append(ptitle)
-            except Exception as e:
-                print(f"[diag] search fallback ERR: {type(e).__name__}: {e}", file=sys.stderr)
+        # 2026-09-26 fix：抽离成函数，让主循环崩了 (429/5xx) 也能调用兑底
+        fetched, _ = run_search_fallback(weeks, today_compact)
+        total += fetched
 
         # stdout: clean summary only — cron delivery pushes this to channel
         print(f"✅ daily-briefing fetched: {total} briefings from {len(weeks)} weeks")
     except urllib.error.HTTPError as e:
-        print(f"[diag] HTTPError: {e.code} {e.reason}", file=sys.stderr)
+        print(f"[diag] main loop HTTPError: {e.code} {e.reason}（即使 retry 仍失败）", file=sys.stderr)
         body = e.read().decode("utf-8", errors="replace")
         print(f"[diag] response body: {body[:1000]}", file=sys.stderr)
+        # 2026-09-26 修复：主循环崩了也要触发 search fallback（仅这一次也要兑底）
+        run_search_fallback_after_main_loop_crash()
         sys.exit(3)
     except Exception as e:
         import traceback
         print(f"[diag] Exception: {type(e).__name__}: {e}", file=sys.stderr)
         traceback.print_exc()
+        run_search_fallback_after_main_loop_crash()
         sys.exit(4)
+    finally:
+        # 2026-09-26 修复：告诉 healthcheck 今天的 markdown 到底在不在
+        write_today_summary()
 
 
 if __name__ == "__main__":
