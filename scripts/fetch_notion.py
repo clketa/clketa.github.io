@@ -221,6 +221,8 @@ def run_search_fallback(weeks: list, today_compact: str) -> tuple:
 
     主循环拉完后，如果 today 8位前缀不在已拉 titles 里，走 POST /v1/search 倒查。
     9-26 升级：抽成独立函数，主循环崩了也能调。
+    9-27 升级：Notion search API indexing 可能慢（9-27 实测 12:00 跑时 search 还没 index
+    到刚创建的 9-27 page），加 retry 机制（30s/60s/120s 间隔，3 次）。
     Returns:
         (fetched_count, bytes_written) 供 main() 更新 total 计数。
     """
@@ -231,22 +233,72 @@ def run_search_fallback(weeks: list, today_compact: str) -> tuple:
     if existing:
         print(f"[diag] today markdown already exists, skip search: {[p.name for p in existing]}", file=sys.stderr)
         return (0, 0)
-    print(f"[diag] WARN: 今天 {today_compact} 不在 W39 children 拉取结果中，启用 POST /v1/search 兑底", file=sys.stderr)
-    try:
-        search_req = urllib.request.Request(
-            f"https://api.notion.com/v1/search",
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {NOTION_TOKEN}",
-                "Notion-Version": NOTION_VERSION,
-                "Content-Type": "application/json",
-            },
-            data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
-        )
-        search_res = json.loads(urllib.request.urlopen(search_req, timeout=30).read())
-    except Exception as e:
-        print(f"[diag] search fallback ERR: {type(e).__name__}: {e}", file=sys.stderr)
-        return (0, 0)
+    print(f"[diag] WARN: 今天 {today_compact} 不在 W39 children 拉取结果中，启用 POST /v1/search 兑底（retry 3 次）", file=sys.stderr)
+
+    week_ids = {w["id"] for w in weeks}
+    fetched = 0
+    bytes_written = 0
+    # 2026-09-27 fix：search API 也可能 indexing 慢，retry 3 次 (30s/60s/120s 间隔)
+    for attempt in range(3):
+        try:
+            search_req = urllib.request.Request(
+                f"https://api.notion.com/v1/search",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {NOTION_TOKEN}",
+                    "Notion-Version": NOTION_VERSION,
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps({"query": today_compact, "page_size": 20}).encode("utf-8"),
+            )
+            search_res = json.loads(urllib.request.urlopen(search_req, timeout=30).read())
+        except Exception as e:
+            print(f"[diag] search fallback attempt {attempt+1} ERR: {type(e).__name__}: {e}", file=sys.stderr)
+            if attempt < 2:
+                time.sleep([30, 60, 120][attempt])
+                continue
+            return (0, 0)
+
+        attempt_fetched = 0
+        for r in search_res.get("results", []):
+            if r.get("object") != "page":
+                continue
+            rt = r.get("properties", {}).get("title", {}).get("title", [])
+            ptitle = "".join(t.get("plain_text", "") for t in rt)
+            parent = r.get("parent", {})
+            if not ptitle.startswith(today_compact):
+                continue
+            parent_id = parent.get("page_id") or parent.get("id")
+            if parent_id not in week_ids:
+                continue
+            slug = ptitle.replace("/", "-").replace(" ", "_")
+            try:
+                content = page_to_md(r["id"], ptitle, created_time=r.get("created_time"))
+                content = strip_trailing_json_block(content)
+                out_file = OUTPUT_DIR / f"{slug}.md"
+                if out_file.exists():
+                    continue
+                out_file.write_text(content)
+                print(f"OK [search fallback attempt {attempt+1}] {out_file} ({len(content)} bytes)", file=sys.stderr)
+                attempt_fetched += 1
+                fetched += 1
+                bytes_written += len(content)
+            except Exception as e:
+                print(f"[diag] search fallback write ERR for {r['id']}: {type(e).__name__}: {e}", file=sys.stderr)
+
+        if attempt_fetched > 0:
+            # 找到了，退出 retry
+            print(f"[diag] search fallback OK: 尝试 {attempt+1} 次后拉到 {attempt_fetched} 份", file=sys.stderr)
+            return (fetched, bytes_written)
+
+        # 未找到，准备下一次 retry
+        if attempt < 2:
+            wait = [30, 60, 120][attempt]
+            print(f"[diag] search fallback attempt {attempt+1} 未找到 {today_compact} page，{wait}s 后重试", file=sys.stderr)
+            time.sleep(wait)
+
+    print(f"[diag] search fallback 3 次 retry 都未找到 {today_compact} page（Notion search API 可能需更长 indexing）", file=sys.stderr)
+    return (fetched, bytes_written)
 
     week_ids = {w["id"] for w in weeks}
     fetched = 0
