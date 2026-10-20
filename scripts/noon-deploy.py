@@ -45,9 +45,13 @@ def main():
     today = today_compact()
     report_path = BRIEFING_TMP / f"briefing-report-{today}.json"
     if not report_path.exists():
-        print(f"ERR: briefing-report 不存在: {report_path}", file=sys.stderr)
-        print(f"  说明 write-1130 cron 没跑通，先查上游", file=sys.stderr)
-        return 2
+        # 2026-10-20 fix：上游 write-1130 没产出（LLM 529 / filter 拒等）不是 noon 的错。
+        # exit 2 会让 noon cron 报 error + 误导性告警。改 exit 0（noon 无事可做 = 正常）。
+        print(
+            f"[diag] briefing-report 不存在（上游未产出），noon 无事可做 exit 0: {report_path}",
+            file=sys.stderr,
+        )
+        return 0
 
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))

@@ -205,23 +205,52 @@ def call_mmx_text(model: str, system: str, user_msg: str, max_tokens: int, tempe
             "--output", "text",
             "--quiet",
         ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 分钟上限
+        # 2026-10-20 fix：retry-on-529（MiniMax 服务端过载 overloaded_error）
+        # 10-20 实测：write-1130 (11:30) + write-1145-fallback (11:45) 双双 exit 5，
+        # llm-20261020.json error = `API error: overloaded_error (529) (HTTP 529)`，
+        # duration 只有 1.5 秒（没排队直接拒）。529 是瞬时错误（服务端过载），
+        # 必须重试等负载回落，不能当fatal 直接抛。
+        # 跟Notion API 的 retry-on-429 同款思路：backoff 递增 10/30/60/120/180s。
+        # 总等待上限 ~400s ≈ 6.7 分钟，配合 write-1145-fallback (11:45) 双保险。
+        backoff = [10, 30, 60, 120, 180]
+        last_err = ""
+        for attempt in range(len(backoff) + 1):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,  # 10 分钟上限
+                )
+            except subprocess.TimeoutExpired as e:
+                raise RuntimeError(f"mmx text chat 超时（>{600}s）") from e
+            except FileNotFoundError as e:
+                raise RuntimeError("mmx CLI 未找到（PATH 没 ~/.npm-global/bin）") from e
+
+            if proc.returncode == 0:
+                return proc.stdout
+
+            last_err = proc.stderr.strip() or proc.stdout.strip()
+            # 529/overloaded = 服务端瞬时过载 → retry
+            is_transient = ("529" in last_err) or ("overloaded" in last_err.lower())
+            # 429 rate limit 也是瞬时的 → 一并 retry
+            is_transient = is_transient or ("429" in last_err)
+            if is_transient and attempt < len(backoff):
+                wait = backoff[attempt]
+                print(
+                    f"[diag] mmx {last_err[:60]} → attempt {attempt+1}/{len(backoff)+1}，"
+                    f"{wait}s 后重试",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+                continue
+            # 非瞬时错误，或重试耗尽 → fatal
+            raise RuntimeError(
+                f"mmx text chat 失败 exit={proc.returncode} "
+                f"(attempts={attempt+1}): {last_err[:500]}"
             )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(f"mmx text chat 超时（>{600}s）") from e
-        except FileNotFoundError as e:
-            raise RuntimeError("mmx CLI 未找到（PATH 没 ~/.npm-global/bin）") from e
     finally:
         Path(tmp_messages_file).unlink(missing_ok=True)
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip()
-        raise RuntimeError(f"mmx text chat 失败 exit={proc.returncode}: {err[:500]}")
-    return proc.stdout
 
 
 # ----------------------------------------------------------------------------
